@@ -1,7 +1,11 @@
+import asyncio
+import contextlib
 import logging
 
 from asyncio import CancelledError, sleep
 from itertools import count
+
+import pytest
 
 from sanic.exceptions import NotFound
 from sanic.request import Request
@@ -277,6 +281,41 @@ def test_request_middleware_executes_once(app):
     async def handler(request):
         await request.app._run_request_middleware(request)
         return text("OK")
+
+    request, response = app.test_client.get("/")
+    assert next(i) == 1
+
+    request, response = app.test_client.get("/")
+    assert next(i) == 3
+
+@pytest.mark.asyncio
+async def test_request_middleware_executes_once_when_conn_lost(app):
+    i = count()
+
+    @app.middleware("request")
+    async def inc(request):
+        nonlocal i
+        next(i)
+
+    @app.route("/")
+    async def handler(request):
+        await asyncio.sleep(1.0)
+        return text("OK")
+
+    # schedule client call
+    loop = asyncio.get_event_loop()
+    task = loop.create_task(app.asgi_client.get("/"))
+    loop.call_later(0.01, task)
+    await asyncio.sleep(0.5)
+
+    # cancelling request and closing connection after 0.5 sec
+    task.cancel()
+
+    with contextlib.suppress(asyncio.CancelledError):
+        await task
+
+    # Wait for server and check if it's still serving the cancelled request
+    await asyncio.sleep(1.0)
 
     request, response = app.test_client.get("/")
     assert next(i) == 1
