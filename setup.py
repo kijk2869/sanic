@@ -83,12 +83,11 @@ setup_kwargs = {
     "packages": find_packages(exclude=("tests", "tests.*")),
     "package_data": {"sanic": ["py.typed", "pages/styles/*"]},
     "platforms": "any",
-    "python_requires": ">=3.7",
+    "python_requires": ">=3.8",
     "classifiers": [
         "Development Status :: 4 - Beta",
         "Environment :: Web Environment",
         "License :: OSI Approved :: MIT License",
-        "Programming Language :: Python :: 3.7",
         "Programming Language :: Python :: 3.8",
         "Programming Language :: Python :: 3.9",
         "Programming Language :: Python :: 3.10",
@@ -104,7 +103,7 @@ ujson = "ujson>=1.35" + env_dependency
 uvloop = "uvloop>=0.15.0" + env_dependency
 types_ujson = "types-ujson" + env_dependency
 requirements = [
-    "sanic-routing>=22.8.0",
+    "sanic-routing>=23.6.0",
     "httptools>=0.0.10",
     uvloop,
     ujson,
@@ -112,10 +111,12 @@ requirements = [
     "websockets>=10.0",
     "multidict>=5.0,<7.0",
     "html5tagger>=1.2.1",
+    "tracerite>=1.0.0",
+    "typing-extensions>=4.4.0",
 ]
 
 tests_require = [
-    "sanic-testing>=22.9.0",
+    "sanic-testing>=23.6.0",
     "pytest==7.1.*",
     "coverage",
     "beautifulsoup4",
@@ -126,7 +127,7 @@ tests_require = [
     "black",
     "isort>=5.0.0",
     "bandit",
-    "mypy>=0.901,<0.910",
+    "mypy",
     "docutils",
     "pygments",
     "uvicorn<0.15.0",
@@ -142,6 +143,7 @@ docs_require = [
     "m2r2",
     "enum-tools[sphinx]",
     "mistune<2.0.0",
+    "autodocsumm>=0.2.11",
 ]
 
 dev_require = tests_require + [

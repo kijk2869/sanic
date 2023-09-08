@@ -12,7 +12,7 @@ from sanic_testing.testing import SanicTestClient
 
 from sanic import Blueprint, Sanic
 from sanic.constants import HTTP_METHODS
-from sanic.exceptions import NotFound, SanicException
+from sanic.exceptions import NotFound, SanicException, ServerError
 from sanic.request import Request
 from sanic.response import empty, json, text
 
@@ -502,7 +502,7 @@ def test_dynamic_route_int(app):
 
     request, response = app.test_client.get("/folder/12345")
     assert response.text == "OK"
-    assert type(results[0]) is int
+    assert isinstance(results[0], int)
 
     request, response = app.test_client.get("/folder/asdf")
     assert response.status == 404
@@ -518,7 +518,7 @@ def test_dynamic_route_number(app):
 
     request, response = app.test_client.get("/weight/12345")
     assert response.text == "OK"
-    assert type(results[0]) is float
+    assert isinstance(results[0], float)
 
     request, response = app.test_client.get("/weight/1234.56")
     assert response.status == 200
@@ -567,7 +567,7 @@ def test_dynamic_route_uuid(app):
     url = "/quirky/123e4567-e89b-12d3-a456-426655440000"
     request, response = app.test_client.get(url)
     assert response.text == "OK"
-    assert type(results[0]) is uuid.UUID
+    assert isinstance(results[0], uuid.UUID)
 
     generated_uuid = uuid.uuid4()
     request, response = app.test_client.get(f"/quirky/{generated_uuid}")
@@ -744,8 +744,8 @@ def test_route_duplicate(app):
 
 
 def test_double_stack_route(app):
-    @app.route("/test/1")
-    @app.route("/test/2")
+    @app.route("/test/1", name="test1")
+    @app.route("/test/2", name="test2")
     async def handler1(request):
         return text("OK")
 
@@ -759,8 +759,8 @@ def test_double_stack_route(app):
 async def test_websocket_route_asgi(app):
     ev = asyncio.Event()
 
-    @app.websocket("/test/1")
-    @app.websocket("/test/2")
+    @app.websocket("/test/1", name="test1")
+    @app.websocket("/test/2", name="test2")
     async def handler(request, ws):
         ev.set()
 
@@ -861,7 +861,7 @@ def test_dynamic_add_route_int(app):
 
     request, response = app.test_client.get("/folder/12345")
     assert response.text == "OK"
-    assert type(results[0]) is int
+    assert isinstance(results[0], int)
 
     request, response = app.test_client.get("/folder/asdf")
     assert response.status == 404
@@ -878,7 +878,7 @@ def test_dynamic_add_route_number(app):
 
     request, response = app.test_client.get("/weight/12345")
     assert response.text == "OK"
-    assert type(results[0]) is float
+    assert isinstance(results[0], float)
 
     request, response = app.test_client.get("/weight/1234.56")
     assert response.status == 200
@@ -1279,7 +1279,7 @@ async def test_added_callable_route_ctx_kwargs(app):
 
 
 @pytest.mark.asyncio
-async def test_duplicate_route_deprecation(app):
+async def test_duplicate_route_error(app):
     @app.route("/foo", name="duped")
     async def handler_foo(request):
         return text("...")
@@ -1289,9 +1289,7 @@ async def test_duplicate_route_deprecation(app):
         return text("...")
 
     message = (
-        r"\[DEPRECATION v23\.3\] Duplicate route names detected: "
-        r"test_duplicate_route_deprecation\.duped\. In the future, "
-        r"Sanic will enforce uniqueness in route naming\."
+        "Duplicate route names detected: test_duplicate_route_error.duped."
     )
-    with pytest.warns(DeprecationWarning, match=message):
+    with pytest.raises(ServerError, match=message):
         await app._startup()

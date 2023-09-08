@@ -1,5 +1,7 @@
 """Defines basics of HTTP standard."""
 
+import sys
+
 from importlib import import_module
 from inspect import ismodule
 from typing import Dict
@@ -157,6 +159,10 @@ def import_string(module_name, package=None):
     return obj()
 
 
+def is_atty() -> bool:
+    return bool(sys.stdout and sys.stdout.isatty())
+
+
 class Default:
     """
     It is used to replace `None` or `object()` as a sentinel
@@ -165,7 +171,11 @@ class Default:
     default value, and `object()` is hard to be typed.
     """
 
-    pass
+    def __repr__(self):
+        return "<Default>"
+
+    def __str__(self) -> str:
+        return self.__repr__()
 
 
 _default = Default()

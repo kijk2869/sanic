@@ -21,7 +21,7 @@ from websockets.frames import Frame, Opcode
 
 
 try:  # websockets < 11.0
-    from websockets.connection import Event, State
+    from websockets.connection import Event, State  # type: ignore
     from websockets.server import ServerConnection as ServerProtocol
 except ImportError:  # websockets >= 11.0
     from websockets.protocol import Event, State  # type: ignore
@@ -29,7 +29,7 @@ except ImportError:  # websockets >= 11.0
 
 from websockets.typing import Data
 
-from sanic.log import deprecation, error_logger, logger
+from sanic.log import error_logger, logger
 from sanic.server.protocols.base_protocol import SanicProtocol
 
 from ...exceptions import ServerError, WebsocketClosed
@@ -98,15 +98,6 @@ class WebsocketImplProtocol:
     @property
     def subprotocol(self):
         return self.ws_proto.subprotocol
-
-    @property
-    def connection(self):
-        deprecation(
-            "The connection property has been deprecated and will be removed. "
-            "Please use the ws_proto property instead going forward.",
-            22.6,
-        )
-        return self.ws_proto
 
     def pause_frames(self):
         if not self.can_pause:
@@ -541,12 +532,11 @@ class WebsocketImplProtocol:
             raise WebsocketClosed(
                 "Cannot receive from websocket interface after it is closed."
             )
+        assembler_get: Optional[asyncio.Task] = None
         try:
             self.recv_cancel = asyncio.Future()
-            tasks = (
-                self.recv_cancel,
-                asyncio.ensure_future(self.assembler.get(timeout)),
-            )
+            assembler_get = asyncio.create_task(self.assembler.get(timeout))
+            tasks = (self.recv_cancel, assembler_get)
             done, pending = await asyncio.wait(
                 tasks,
                 return_when=asyncio.FIRST_COMPLETED,
@@ -560,6 +550,11 @@ class WebsocketImplProtocol:
             else:
                 self.recv_cancel.cancel()
                 return done_task.result()
+        except asyncio.CancelledError:
+            # recv was cancelled
+            if assembler_get:
+                assembler_get.cancel()
+            raise
         finally:
             self.recv_cancel = None
             self.recv_lock.release()
@@ -593,16 +588,15 @@ class WebsocketImplProtocol:
                 "Cannot receive from websocket interface after it is closed."
             )
         messages = []
+        assembler_get: Optional[asyncio.Task] = None
         try:
             # Prevent pausing the transport when we're
             # receiving a burst of messages
             self.can_pause = False
             self.recv_cancel = asyncio.Future()
             while True:
-                tasks = (
-                    self.recv_cancel,
-                    asyncio.ensure_future(self.assembler.get(timeout=0)),
-                )
+                assembler_get = asyncio.create_task(self.assembler.get(0))
+                tasks = (self.recv_cancel, assembler_get)
                 done, pending = await asyncio.wait(
                     tasks,
                     return_when=asyncio.FIRST_COMPLETED,
@@ -625,6 +619,11 @@ class WebsocketImplProtocol:
                 # next message to pass into the Assembler
                 await asyncio.sleep(0)
             self.recv_cancel.cancel()
+        except asyncio.CancelledError:
+            # recv_burst was cancelled
+            if assembler_get:
+                assembler_get.cancel()
+            raise
         finally:
             self.recv_cancel = None
             self.can_pause = True

@@ -20,9 +20,11 @@ from pytest import LogCaptureFixture
 
 from sanic import Request, Sanic
 from sanic.compat import Header
+from sanic.constants import DEFAULT_HTTP_CONTENT_TYPE
 from sanic.cookies import CookieJar
 from sanic.response import (
     HTTPResponse,
+    ResponseStream,
     empty,
     file,
     file_stream,
@@ -544,7 +546,7 @@ def test_raw_response(app):
         return raw(b"raw_response")
 
     request, response = app.test_client.get("/test")
-    assert response.content_type == "application/octet-stream"
+    assert response.content_type == DEFAULT_HTTP_CONTENT_TYPE
     assert response.body == b"raw_response"
 
 
@@ -943,3 +945,17 @@ def test_file_validating_304_response(
     )
     assert response.status == 304
     assert response.body == b""
+
+
+def test_stream_response_with_default_headers(app: Sanic):
+    async def sample_streaming_fn(response_):
+        await response_.write("foo")
+
+    @app.route("/")
+    async def test(request: Request):
+        return ResponseStream(sample_streaming_fn, content_type="text/csv")
+
+    _, response = app.test_client.get("/")
+    assert response.text == "foo"
+    assert response.headers["Transfer-Encoding"] == "chunked"
+    assert response.headers["Content-Type"] == "text/csv"

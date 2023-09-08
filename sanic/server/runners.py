@@ -1,7 +1,5 @@
 from __future__ import annotations
 
-import sys
-
 from ssl import SSLContext
 from typing import TYPE_CHECKING, Dict, Optional, Type, Union
 
@@ -9,19 +7,17 @@ from sanic.config import Config
 from sanic.exceptions import ServerError
 from sanic.http.constants import HTTP
 from sanic.http.tls import get_ssl_context
-from sanic.server.events import trigger_events
 
 
 if TYPE_CHECKING:
     from sanic.app import Sanic
 
 import asyncio
-import multiprocessing
 import os
 import socket
 
 from functools import partial
-from signal import SIG_IGN, SIGINT, SIGTERM, Signals
+from signal import SIG_IGN, SIGINT, SIGTERM
 from signal import signal as signal_func
 
 from sanic.application.ext import setup_ext
@@ -31,11 +27,7 @@ from sanic.log import error_logger, server_logger
 from sanic.models.server_types import Signal
 from sanic.server.async_server import AsyncioServer
 from sanic.server.protocols.http_protocol import Http3Protocol, HttpProtocol
-from sanic.server.socket import (
-    bind_socket,
-    bind_unix_socket,
-    remove_unix_socket,
-)
+from sanic.server.socket import bind_unix_socket, remove_unix_socket
 
 
 try:
@@ -90,7 +82,44 @@ def serve(
     :param asyncio_server_kwargs: key-value args for asyncio/uvloop
                                   create_server method
     :return: Nothing
-    """
+
+    Args:
+        host (str): Address to host on
+        port (int): Port to host on
+        app (Sanic): Sanic app instance
+        ssl (Optional[SSLContext], optional): SSLContext. Defaults to `None`.
+        sock (Optional[socket.socket], optional): Socket for the server to
+            accept connections from. Defaults to `None`.
+        unix (Optional[str], optional): Unix socket to listen on instead of
+            TCP port. Defaults to `None`.
+        reuse_port (bool, optional): `True` for multiple workers. Defaults
+            to `False`.
+        loop: asyncio compatible event loop. Defaults
+            to `None`.
+        protocol (Type[asyncio.Protocol], optional): Protocol to use. Defaults
+            to `HttpProtocol`.
+        backlog (int, optional): The maximum number of queued connections
+            passed to socket.listen(). Defaults to `100`.
+        register_sys_signals (bool, optional): Register SIGINT and SIGTERM.
+            Defaults to `True`.
+        run_multiple (bool, optional): Run multiple workers. Defaults
+            to `False`.
+        run_async (bool, optional): Return an AsyncServer object.
+            Defaults to `False`.
+        connections: Connections. Defaults to `None`.
+        signal (Signal, optional): Signal. Defaults to `Signal()`.
+        state: State. Defaults to `None`.
+        asyncio_server_kwargs (Optional[Dict[str, Union[int, float]]], optional):
+            key-value args for asyncio/uvloop create_server method. Defaults
+            to `None`.
+        version (str, optional): HTTP version. Defaults to `HTTP.VERSION_1`.
+
+    Raises:
+        ServerError: Cannot run HTTP/3 server without aioquic installed.
+
+    Returns:
+        AsyncioServer: AsyncioServer object if `run_async` is `True`.
+    """  # noqa: E501
     if not run_async and not loop:
         # create new event_loop after fork
         loop = asyncio.new_event_loop()
@@ -257,8 +286,7 @@ def _serve_http_1(
             loop.run_until_complete(asyncio.sleep(0.1))
             start_shutdown = start_shutdown + 0.1
 
-        if sys.version_info > (3, 7):
-            app.shutdown_tasks(graceful - start_shutdown)
+        app.shutdown_tasks(graceful - start_shutdown)
 
         # Force close non-idle connection after waiting for
         # graceful_shutdown_timeout
@@ -317,94 +345,6 @@ def _serve_http_3(
     _run_server_forever(
         loop, server.before_stop, server.after_stop, cleanup, None
     )
-
-
-def serve_single(server_settings):
-    main_start = server_settings.pop("main_start", None)
-    main_stop = server_settings.pop("main_stop", None)
-
-    if not server_settings.get("run_async"):
-        # create new event_loop after fork
-        loop = asyncio.new_event_loop()
-        asyncio.set_event_loop(loop)
-        server_settings["loop"] = loop
-
-    trigger_events(main_start, server_settings["loop"])
-    serve(**server_settings)
-    trigger_events(main_stop, server_settings["loop"])
-
-    server_settings["loop"].close()
-
-
-def serve_multiple(server_settings, workers):
-    """Start multiple server processes simultaneously.  Stop on interrupt
-    and terminate signals, and drain connections when complete.
-
-    :param server_settings: kw arguments to be passed to the serve function
-    :param workers: number of workers to launch
-    :param stop_event: if provided, is used as a stop signal
-    :return:
-    """
-    server_settings["reuse_port"] = True
-    server_settings["run_multiple"] = True
-
-    main_start = server_settings.pop("main_start", None)
-    main_stop = server_settings.pop("main_stop", None)
-    loop = asyncio.new_event_loop()
-    asyncio.set_event_loop(loop)
-
-    trigger_events(main_start, loop)
-
-    # Create a listening socket or use the one in settings
-    sock = server_settings.get("sock")
-    unix = server_settings["unix"]
-    backlog = server_settings["backlog"]
-    if unix:
-        sock = bind_unix_socket(unix, backlog=backlog)
-        server_settings["unix"] = unix
-    if sock is None:
-        sock = bind_socket(
-            server_settings["host"], server_settings["port"], backlog=backlog
-        )
-        sock.set_inheritable(True)
-        server_settings["sock"] = sock
-        server_settings["host"] = None
-        server_settings["port"] = None
-
-    processes = []
-
-    def sig_handler(signal, frame):
-        server_logger.info(
-            "Received signal %s. Shutting down.", Signals(signal).name
-        )
-        for process in processes:
-            os.kill(process.pid, SIGTERM)
-
-    signal_func(SIGINT, lambda s, f: sig_handler(s, f))
-    signal_func(SIGTERM, lambda s, f: sig_handler(s, f))
-    mp = multiprocessing.get_context("fork")
-
-    for _ in range(workers):
-        process = mp.Process(
-            target=serve,
-            kwargs=server_settings,
-        )
-        process.daemon = True
-        process.start()
-        processes.append(process)
-
-    for process in processes:
-        process.join()
-
-    # the above processes will block this until they're stopped
-    for process in processes:
-        process.terminate()
-
-    trigger_events(main_stop, loop)
-
-    sock.close()
-    loop.close()
-    remove_unix_socket(unix)
 
 
 def _build_protocol_kwargs(

@@ -18,7 +18,12 @@ from typing import (
 
 from sanic.compat import Header
 from sanic.constants import LocalCertCreator
-from sanic.exceptions import PayloadTooLarge, SanicException, ServerError
+from sanic.exceptions import (
+    BadRequest,
+    PayloadTooLarge,
+    SanicException,
+    ServerError,
+)
 from sanic.helpers import has_message_body
 from sanic.http.constants import Stage
 from sanic.http.stream import Stream
@@ -55,6 +60,8 @@ if TYPE_CHECKING:
 
 
 class HTTP3Transport(TransportProtocol):
+    """HTTP/3 transport implementation."""
+
     __slots__ = ("_protocol",)
 
     def __init__(self, protocol: Http3Protocol):
@@ -77,6 +84,8 @@ class HTTP3Transport(TransportProtocol):
 
 
 class Receiver(ABC):
+    """HTTP/3 receiver base class."""
+
     future: asyncio.Future
 
     def __init__(self, transmit, protocol, request: Request) -> None:
@@ -90,6 +99,8 @@ class Receiver(ABC):
 
 
 class HTTPReceiver(Receiver, Stream):
+    """HTTP/3 receiver implementation."""
+
     stage: Stage
     request: Request
 
@@ -103,6 +114,7 @@ class HTTPReceiver(Receiver, Stream):
         self.request_bytes = 0
 
     async def run(self, exception: Optional[Exception] = None):
+        """Handle the request and response cycle."""
         self.stage = Stage.HANDLER
         self.head_only = self.request.method.upper() == "HEAD"
 
@@ -128,9 +140,7 @@ class HTTPReceiver(Receiver, Stream):
         self.stage = Stage.IDLE
 
     async def error_response(self, exception: Exception) -> None:
-        """
-        Handle response when exception encountered
-        """
+        """Handle response when exception encountered"""
         # From request and handler states we can respond, otherwise be silent
         app = self.protocol.app
 
@@ -167,6 +177,7 @@ class HTTPReceiver(Receiver, Stream):
         return headers
 
     def send_headers(self) -> None:
+        """Send response headers to client"""
         logger.debug(  # no cov
             f"{Colors.BLUE}[send]: {Colors.GREEN}HEADERS{Colors.END}",
             extra={"verbosity": 2},
@@ -190,6 +201,7 @@ class HTTPReceiver(Receiver, Stream):
             self.future.cancel()
 
     def respond(self, response: BaseHTTPResponse) -> BaseHTTPResponse:
+        """Prepare response to client"""
         logger.debug(  # no cov
             f"{Colors.BLUE}[respond]:{Colors.END} {response}",
             extra={"verbosity": 2},
@@ -208,6 +220,7 @@ class HTTPReceiver(Receiver, Stream):
         return response
 
     def receive_body(self, data: bytes) -> None:
+        """Receive request body from client"""
         self.request_bytes += len(data)
         if self.request_bytes > self.request_max_size:
             raise PayloadTooLarge("Request body exceeds the size limit")
@@ -215,6 +228,7 @@ class HTTPReceiver(Receiver, Stream):
         self.request.body += data
 
     async def send(self, data: bytes, end_stream: bool) -> None:
+        """Send data to client"""
         logger.debug(  # no cov
             f"{Colors.BLUE}[send]: {Colors.GREEN}data={data.decode()} "
             f"end_stream={end_stream}{Colors.END}",
@@ -259,19 +273,21 @@ class HTTPReceiver(Receiver, Stream):
 
 
 class WebsocketReceiver(Receiver):  # noqa
+    """Websocket receiver implementation."""
+
     async def run(self):
         ...
 
 
 class WebTransportReceiver(Receiver):  # noqa
+    """WebTransport receiver implementation."""
+
     async def run(self):
         ...
 
 
 class Http3:
-    """
-    Internal helper for managing the HTTP/3 request/response cycle
-    """
+    """Internal helper for managing the HTTP/3 request/response cycle"""
 
     if HTTP3_AVAILABLE:
         HANDLER_PROPERTY_MAPPING = {
@@ -333,7 +349,17 @@ class Http3:
         return self.receivers[stream_id]
 
     def _make_request(self, event: HeadersReceived) -> Request:
-        headers = Header(((k.decode(), v.decode()) for k, v in event.headers))
+        try:
+            headers = Header(
+                (
+                    (k.decode("ASCII"), v.decode(errors="surrogateescape"))
+                    for k, v in event.headers
+                )
+            )
+        except UnicodeDecodeError:
+            raise BadRequest(
+                "Header names may only contain US-ASCII characters."
+            )
         method = headers[":method"]
         path = headers[":path"]
         scheme = headers.pop(":scheme", "")
@@ -342,9 +368,14 @@ class Http3:
         if authority:
             headers["host"] = authority
 
+        try:
+            url_bytes = path.encode("ASCII")
+        except UnicodeEncodeError:
+            raise BadRequest("URL may only contain US-ASCII characters.")
+
         transport = HTTP3Transport(self.protocol)
         request = self.protocol.request_class(
-            path.encode(),
+            url_bytes,
             headers,
             "3",
             method,
